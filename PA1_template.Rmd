@@ -1,0 +1,193 @@
+---
+title: "Peer Assessment 1"
+author: "Irina Popa"
+date: "Tuesday, April 14, 2015"
+output: html_document
+---
+
+This is the R Markdown document for Peer Assessment 1.
+
+First I need to load the .csv file with the raw data for this assignment.
+
+```{r, echo=TRUE}
+steps<-read.csv("D:/Tools/#Coursera/05_ReproducibleResearch/#Peer Assessments/PA1/activity.csv", na.strings = "NA")
+head(steps)
+```
+
+
+## What is mean total number of steps taken per day?
+
+
+*1. Calculate the total number of steps taken per day*
+
+Transforming the data in order to prepare it for the analysis and calculating the total number of steps taken each day:
+
+```{r, echo=TRUE}
+require(sqldf)
+steps2<-sqldf("SELECT date, sum(steps) as steps_per_day FROM steps GROUP BY date")
+head(steps2)
+str(steps2)
+steps2$steps_per_day<-as.integer(steps2$steps_per_day)
+str(steps2)
+```
+
+
+*2. Make a histogram of the total number of steps taken each day*
+
+Plotting the histogram. The binwidth chosen was 3000.
+
+```{r, echo=TRUE}
+require(ggplot2)
+qplot(steps_per_day, data=steps2, geom="histogram", binwidth=3000)
+```
+
+*3. Calculate and report the mean and median of the total number of steps taken per day*
+
+The mean of total number of steps taken per day is:
+
+```{r, echo=TRUE}
+mean(steps2$steps_per_day, na.rm = TRUE)
+```
+
+And the median of total number of steps taken per day is: 
+
+```{r, echo=TRUE}
+median(steps2$steps_per_day, na.rm = TRUE)
+```
+
+
+## What is the average daily activity pattern?
+
+
+*1. The time series plot of the 5-minute interval (x-axis) and the average number of steps taken, averaged across all days (y-axis) is:*
+
+```{r,echo=TRUE}
+#calculating daily average per interval
+steps3<-sqldf("SELECT interval, avg(steps) as steps_per_interval FROM steps GROUP BY interval")
+head(steps3)
+str(steps3)
+#building the plot
+ggplot(steps3, aes(x = interval, y = steps_per_interval)) + geom_line(lty = "dashed", colour = "red") + scale_x_discrete(breaks=seq(0,2400, by=100))
+```
+
+So, we see that there are some spikes early in the morning and on lunch time and in the evening when the work day is over.
+
+```{r,echo=TRUE}
+max_interval<-steps3[steps3$steps_per_interval==max(steps3$steps_per_interval),1]
+```
+
+The interval with the maximum average daily steps number is: **`r max_interval`**. So, the monitoring device registers the highest number of steps very early in the morning, at 8.35 AM.
+
+
+## Imputing missing values
+
+*1. Calculate and report the total number of missing values in the dataset (i.e. the total number of rows with NAs). For this I am going to use the complete.cases() function, since all the other variables have data for each of the rows and the steps variables is the only one that can have NAs.*
+
+```{r,echo=TRUE}
+missing_rows<-sum(as.integer(!complete.cases(steps)))
+```
+
+There is a total of **`r missing_rows`** rows with missing values (NAs) in the raw data file.
+
+*2. Devise a strategy for filling in all of the missing values in the dataset. The strategy does not need to be sophisticated. For example, you could use the mean/median for that day, or the mean for that 5-minute interval, etc.*
+
+I am going to use the mean per 5 minute interval to replace the missing values:
+
+```{r,echo=TRUE}
+steps4<-sqldf(
+  "
+  SELECT 
+  CASE WHEN main.steps IS NULL THEN main.steps_per_interval ELSE main.steps END AS steps
+  , main.date AS date
+  , main.interval AS interval
+  , main.steps_per_interval AS steps_per_interval
+  FROM
+  ( 
+    SELECT a.*, c.steps_per_interval
+    FROM steps a
+    LEFT JOIN steps2 b ON a.date=b.date
+    LEFT JOIN steps3 c ON a.interval=c.interval
+  ) main
+  "
+  )
+head(steps4)
+
+```
+
+Count again for incomplete cases:
+
+```{r,echo=TRUE}
+missing_rows<-sum(as.integer(!complete.cases(steps4)))
+```
+
+After replacing the missing values there is a total of **`r missing_rows`** rows with missing values (NAs) left in the data frame.
+
+*3. Create a new dataset that is equal to the original dataset but with the missing data filled in.*
+
+From the data frame that I created in the previous step I am just going to remove the steps_per_interval variable and print the structure of the table afterwards.
+
+```{r, echo=TRUE}
+steps4$steps_per_interval<-NULL
+str(steps4)
+```
+
+
+*4. Make a histogram of the total number of steps taken each day and Calculate and report the mean and median total number of steps taken per day. Do these values differ from the estimates from the first part of the assignment? What is the impact of imputing missing data on the estimates of the total daily number of steps?*
+
+
+```{r, echo=TRUE}
+require(sqldf)
+steps5<-sqldf("SELECT date, sum(steps) as steps_per_day FROM steps4 GROUP BY date")
+steps5$steps_per_day<-as.integer(steps5$steps_per_day)
+require(ggplot2)
+qplot(steps_per_day, data=steps5, geom="histogram", binwidth=3000)
+```
+
+The histogram differs from the very first one that we built.
+
+```{r, echo=TRUE}
+mean2<-as.integer(mean(steps5$steps_per_day, na.rm = TRUE))
+median2<-median(steps5$steps_per_day, na.rm = TRUE)
+#first mean and median computed
+mean1<-as.integer(mean(steps2$steps_per_day, na.rm = TRUE))
+median1<-median(steps2$steps_per_day, na.rm = TRUE)
+```
+
+
+The mean of the total number of steps taken per day is **`r mean2`** and the median is **`r median2`**. These two differ from the first mean and median we computed (mean = `r mean1` and median = `r median1`). In the second computation the values are a little bit smaller, taking into consideration that in the first one we ommitted the rows with NAs.
+
+
+## Are there differences in activity patterns between weekdays and weekends?
+
+
+*1. Create a new factor variable in the dataset with two levels - "weekday" and "weekend" indicating whether a given date is a weekday or weekend day.*
+
+```{r,echo=TRUE, fig.width=10}
+steps4$weekdays_name<-weekdays(as.Date(steps4$date))
+steps6<-sqldf(
+  "
+  SELECT day_type, interval, AVG(steps) AS avg_steps
+  FROM
+  (
+  SELECT a.*
+  , CASE WHEN weekdays_name IN ('Saturday', 'Sunday') THEN 'weekend' ELSE 'weekday' END AS day_type 
+  FROM steps4 a
+  ) main
+  GROUP BY 1,2
+  "
+)
+head(steps6)
+str(steps6)
+steps6$day_type<-as.factor(steps6$day_type)
+str(steps6)
+```
+
+*2. Make a panel plot containing a time series plot (i.e. type = "l") of the 5-minute interval (x-axis) and the average number of steps taken, averaged across all weekday days or weekend days (y-axis). See the README file in the GitHub repository to see an example of what this plot should look like using simulated data.*
+
+```{r,echo=TRUE}
+ggplot(steps6, aes(interval,avg_steps))+geom_line(lty = "dashed", colour = "red")+facet_grid(day_type~.) + 
+  ylab ("Number of steps") + xlab ("Interval") + scale_x_discrete(breaks=seq(0,2400, by=100)) 
+```
+
+The above panel plot shows us that there are differences between the number of steps reported by the monitoring device during the weekdays and the weekend -- our subject wakes up earlier in the morning during the weekdays and has a more sedentary activity during the working hours as opposed to the weekends when he wakes up a little bit later than during the working days and he is more active during the majority of the day.
+
